@@ -10,4 +10,4 @@ class ResponseUtil:
             'code': code,
             'data': data,
         }
-        return HttpResponse(json.dumps(resp), content_type='application/json')
+        return HttpResponse(json.dumps(resp), content_type='application/json, charset=utf-8')
