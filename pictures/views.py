@@ -1,8 +1,6 @@
 import json
 import datetime
 
-# from django.core.serializers.json import DjangoJSONEncoder
-from django.http import JsonResponse
 from django.core.paginator import Paginator
 from .models import MemeInfo, MemeGroupRelation, MemeGroupTagRelation, \
     MemeGroupInfo, UserInfo, TagInfo, UserStarRelation
@@ -46,22 +44,23 @@ def login(request):
         user_password = req['password']
         hash_pwd = PasswordUtil.password_hash(user[0].code, user_password, user[0].created_at)
         if user[0].password == hash_pwd:
-            return ResponseUtil.response_format('success', {'code': user[0].code, 'message': '登录成功！'})
+            data = {'code': user[0].code, 'nick': user[0].nick, 'message': '登录成功！'}
+            return ResponseUtil.response_format('success', data)
         else:
             return ResponseUtil.response_format('failure', {'message': '密码不正确！'})
     else:
         return ResponseUtil.response_format('failure', {'message': '用户不存在！'})
 
 
-# 完善自我信息
+# 完善个人信息
 def update_information(request):
     if request.method != 'POST':
         return ResponseUtil.response_format('failure', None)
 
     req = json.loads(request.body)
-    code, name, sex, email, birthday = req['code'], req['username'], req['sex'], req['email'], req['birthday']
+    code, nick, gender, email, birthday = req['code'], req['nick'], req['gender'], req['email'], req['birthday']
     UserInfo.objects.filter(code=code) \
-        .update(nick=name, gender=sex, email=email, birthday=birthday)
+        .update(nick=nick, gender=gender, email=email, birthday=birthday)
     return ResponseUtil.response_format('success', {'message': '修改成功！'})
 
 
@@ -73,7 +72,8 @@ def all_user_information(request):
     req = json.loads(request.body)
     code = req['code']
     user = UserInfo.objects.filter(code=code).values('nick', 'email', 'gender', 'birthday')
-    return JsonResponse(user, json_dumps_params={"ensure_ascii": False})
+
+    return ResponseUtil.response_orm('success', user)
 
 
 def page_meme_groups(request):
@@ -145,6 +145,17 @@ def get_meme_tag_by_group_codes(meme_group_codes):
     return meme_group_tag_dict
 
 
+def get_meme_title_by_group_codes(star_group_codes):
+    meme_groups = MemeGroupInfo.objects \
+        .filter(code__in=star_group_codes).all()
+
+    meme_group_title_dict = {}
+    for group in meme_groups:
+        meme_group_title_dict[group.code] = group.name
+    print(meme_group_title_dict)
+    return meme_group_title_dict
+
+
 def hot_meme_page(request):
     if request.method != 'POST':
         return ResponseUtil.response_format('failure', None)
@@ -174,8 +185,7 @@ def hot_meme_page(request):
     return ResponseUtil.response_format('success', {'records': records, 'total': total_page_number})
 
 
-# 分类
-def sort_tag_groups(request):
+def sort_meme_group(request):
     if request.method != 'POST':
         return ResponseUtil.response_format('failure', None)
 
@@ -183,7 +193,44 @@ def sort_tag_groups(request):
     page_number, page_size = req['pageNo'], req['pageSize']
 
     meme_sort_page = Paginator(TagInfo.objects.all(), page_size)
-    meme_sort_groups = meme_sort_page.page(page_size).object_list
+    sort_groups = meme_sort_page.page(page_number).object_list
+    total_sort_number = meme_sort_page.num_pages
+
+    sort_codes = [sort_group.code for sort_group in sort_groups]
+    sort_group_dict = get_meme_group_by_sort_tag(sort_codes)
+
+    for sort_group in sort_groups:
+        records.append({
+            'name': sort_group.name,
+            'groups': sort_group_dict[sort_group.code]
+        })
+
+    return ResponseUtil.response_format('success', {'records': records, 'total': total_sort_number})
+
+
+def get_meme_group_by_sort_tag(meme_sort_codes):
+    relations = MemeGroupTagRelation.objects \
+        .filter(tag_code__in=meme_sort_codes).all()
+    meme_groups = MemeGroupInfo.objects \
+        .filter(code__in=[relation.meme_group_code for relation in relations])
+    meme_groups_code_dict = {meme_group.code: meme_group for meme_group in meme_groups}
+
+    meme_groups_dict = {}
+    for relation in relations:
+        if relation.tag_code not in meme_groups_dict.keys():
+            meme_groups_dict[relation.tag_code] = []
+
+        group = meme_groups_code_dict[relation.meme_group_code]
+        image_dict = get_meme_info_by_group_codes([group.code])
+        tag_dict = get_meme_tag_by_group_codes([group.code])
+
+        meme_groups_dict[relation.tag_code].append({
+            'code': group.code,
+            'title': group.name,
+            'images': image_dict[group.code],
+            'tags': tag_dict[group.code],
+        })
+    return meme_groups_dict
 
 
 # 标签：先拿取前24个，之后在随机
@@ -193,6 +240,32 @@ def tags_group(request):
 
     tags = TagInfo.objects.all()[:28]
     records = [{'code': tag.code, 'name': tag.name} for tag in tags]
+
+    return ResponseUtil.response_format('success', {'records': records})
+
+
+def tag_meme_groups(request):
+    if request.method != 'POST':
+        return ResponseUtil.response_format('failure', None)
+
+    records, req = [], json.loads(request.body)
+    code = req['code']
+
+    relations = MemeGroupTagRelation.objects.filter(tag_code=code).all()
+    hot_tag_group_codes = [relation.meme_group_code for relation in relations]
+
+    hot_tag_group_title_dict = get_meme_title_by_group_codes(hot_tag_group_codes)
+    hot_tag_group_image_dict = get_meme_info_by_group_codes(hot_tag_group_codes)
+    hot_tag_group_tag_dict = get_meme_tag_by_group_codes(hot_tag_group_codes)
+
+    for relation in relations:
+        records.append({
+            'code': relation.meme_group_code,
+            'title': hot_tag_group_title_dict[relation.meme_group_code],
+            'images': hot_tag_group_image_dict[relation.meme_group_code],
+            'tags': hot_tag_group_tag_dict[relation.meme_group_code],
+        })
+
     return ResponseUtil.response_format('success', {'records': records})
 
 
@@ -204,7 +277,9 @@ def star_by_user(request):
     records, req = [], json.loads(request.body)
     user_code, meme_group_code = req['userCode'], req['groupCode']
     time_now = datetime.datetime.now()
-    UserStarRelation.objects.create(user_code=user_code, meme_group_code=meme_group_code, created_at=time_now)
+    UserStarRelation.objects \
+        .create(user_code=user_code, meme_group_code=meme_group_code, created_at=time_now)
+
     return ResponseUtil.response_format('success', {'message': '已收藏！'})
 
 
@@ -215,7 +290,8 @@ def is_already_star(request):
 
     req = json.loads(request.body)
     user_code, meme_group_code = req['userCode'], req['groupCode']
-    exist = UserStarRelation.objects.filter(user_code=user_code, meme_group_code=meme_group_code)
+    exist = UserStarRelation.objects \
+        .filter(user_code=user_code, meme_group_code=meme_group_code)
     if exist:
         return ResponseUtil.response_format('success', {'exist': True})
 
@@ -231,12 +307,113 @@ def cancel_star_by_user(request):
     user_code, meme_group_code = req['userCode'], req['groupCode']
     UserStarRelation.objects \
         .filter(user_code=user_code, meme_group_code=meme_group_code).delete()
+
     return ResponseUtil.response_format('success', {'message': '已取消！'})
 
 
-def upload_group(request):
+# 获取收藏列表
+def star_meme_group(request):
+    if request.method != 'POST':
+        return ResponseUtil.response_format('failure', None)
+
+    records, req = [], json.loads(request.body)
+    user_code = req['code']
+    star_groups = UserStarRelation.objects.filter(user_code=user_code)
+
+    star_group_codes = [star_group.meme_group_code for star_group in star_groups]
+    meme_group_title_dict = get_meme_title_by_group_codes(star_group_codes)
+    meme_group_image_dict = get_meme_info_by_group_codes(star_group_codes)
+    meme_group_tag_dict = get_meme_tag_by_group_codes(star_group_codes)
+
+    for star_group in star_groups:
+        records.append({
+            'code': star_group.meme_group_code,
+            'title': meme_group_title_dict[star_group.meme_group_code],
+            'images': meme_group_image_dict[star_group.meme_group_code],
+            'tags': meme_group_tag_dict[star_group.meme_group_code]
+        })
+
+    return ResponseUtil.response_format('success',  {'records': records})
+
+
+# 发布列表
+def upload_meme_group(request):
+    if request.method != 'POST':
+        return ResponseUtil.response_format('failure', None)
+
+    records, req = [], json.loads(request.body)
+    user_nick = req['nick']
+
+    upload_groups = MemeGroupInfo.objects.filter(created_by=user_nick).all()
+    upload_group_codes = [upload_group.code for upload_group in upload_groups]
+    upload_group_img_dict = get_meme_info_by_group_codes(upload_group_codes)
+    upload_group_tag_dict = get_meme_tag_by_group_codes(upload_group_codes)
+
+    for upload_group in upload_groups:
+        records.append({
+            'code': upload_group.code,
+            'title': upload_group.name,
+            'images': upload_group_img_dict[upload_group.code],
+            'tags': upload_group_tag_dict[upload_group.code],
+        })
+
+    return ResponseUtil.response_format('success', {'records': records})
+
+
+# 发布表情包
+def upload_group_by_user(request):
     if request.method != 'POST':
         return ResponseUtil.response_format('failure', None)
 
     req = json.loads(request.body)
+    name, nick, tag_list, remark, upload = req['title'], req['person'], req['tag'], req['description'], req['upload']
+    # 生成唯一code
+    group_code = CodeUtil.gen_code('MG')
+    # 当前时间
+    time_now = datetime.datetime.now()
+    MemeGroupInfo.objects \
+        .create(code=group_code, name=name, created_at=time_now, created_by=nick, remark=remark, status='VISIBLE')
+
+    for tag in tag_list:
+        tag_code = CodeUtil.gen_code('TA')
+        TagInfo.objects.create(code=tag_code, name=tag)
+
+        MemeGroupTagRelation.objects.create(meme_group_code=group_code, tag_code=tag_code, created_at=time_now)
+
+    for meme in upload:
+        meme_code = CodeUtil.gen_code('MI')
+        MemeInfo.objects \
+            .create(code=meme_code, img_type=meme['type'], img_md5=meme['md5'], status='VISIBLE', resource_url=meme['url'], resource_key=meme['key'], created_at=time_now, created_by=nick)
+
+        MemeGroupRelation.objects.create(meme_group_code=group_code, meme_code=meme_code, created_at=time_now)
+
+    return ResponseUtil.response_format('success', {'message': '发布成功！'})
+
+
+def search_meme_groups(request):
+    if request.method != 'POST':
+        return ResponseUtil.response_format('failure', None)
+
+    req = json.loads(request.body)
+    records, keyword = [], req['keyword']
+
+    meme_groups = MemeGroupInfo.objects \
+        .filter(name__icontains=keyword).all()
+
+    if meme_groups:
+        meme_group_codes = [meme_group.code for meme_group in meme_groups]
+        meme_group_image_dict = get_meme_info_by_group_codes(meme_group_codes)
+        meme_group_tag_dict = get_meme_tag_by_group_codes(meme_group_codes)
+
+        for meme_group in meme_groups:
+            records.append({
+                'code': meme_group.code,
+                'title': meme_group.name,
+                'images': meme_group_image_dict[meme_group.code],
+                'tags': meme_group_tag_dict[meme_group.code]
+            })
+
+        return ResponseUtil.response_format('success', {'records': records})
+
+    return ResponseUtil.response_format('failure', {'message': '无相关表情包'})
 
