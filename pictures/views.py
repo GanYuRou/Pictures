@@ -213,22 +213,23 @@ def get_meme_group_by_sort_tag(meme_sort_codes):
         .filter(tag_code__in=meme_sort_codes).all()
     meme_groups = MemeGroupInfo.objects \
         .filter(code__in=[relation.meme_group_code for relation in relations])
+
     meme_groups_code_dict = {meme_group.code: meme_group for meme_group in meme_groups}
+    meme_info_dict = get_meme_info_by_group_codes(meme_groups_code_dict.keys())
+    meme_tag_dict = get_meme_tag_by_group_codes(meme_groups_code_dict.keys())
 
     meme_groups_dict = {}
     for relation in relations:
         if relation.tag_code not in meme_groups_dict.keys():
             meme_groups_dict[relation.tag_code] = []
+            continue
 
         group = meme_groups_code_dict[relation.meme_group_code]
-        image_dict = get_meme_info_by_group_codes([group.code])
-        tag_dict = get_meme_tag_by_group_codes([group.code])
-
         meme_groups_dict[relation.tag_code].append({
             'code': group.code,
             'title': group.name,
-            'images': image_dict[group.code],
-            'tags': tag_dict[group.code],
+            'images': meme_info_dict[group.code],
+            'tags': meme_tag_dict[group.code],
         })
     return meme_groups_dict
 
