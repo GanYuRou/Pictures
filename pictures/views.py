@@ -222,6 +222,7 @@ def get_meme_group_by_sort_tag(meme_sort_codes):
     for relation in relations:
         if relation.tag_code not in meme_groups_dict.keys():
             meme_groups_dict[relation.tag_code] = []
+        else:
             continue
 
         group = meme_groups_code_dict[relation.meme_group_code]
